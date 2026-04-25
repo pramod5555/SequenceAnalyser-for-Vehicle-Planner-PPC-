@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sequence & Skip Order Analyzer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+  
+  <style>
+    :root { --brand: #0d3b8e; --brand-light: #e8f0fe; }
+    body { background: #f4f6fb; font-family: 'Segoe UI', sans-serif; }
+    .topbar { background: var(--brand); color: #fff; padding: 14px 30px; display: flex; align-items: center; gap: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+    .topbar h1 { font-size: 1.3rem; font-weight: 700; margin: 0; }
+    .topbar small { opacity: .75; font-size: .78rem; }
+    .upload-zone { border: 2.5px dashed #adb5bd; border-radius: 14px; background: #fff; padding: 30px 20px; text-align: center; transition: border-color .2s, background .2s; cursor: pointer; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    .upload-zone.drag-over { border-color: var(--brand); background: var(--brand-light); }
+    .upload-zone i { font-size: 2.5rem; color: #adb5bd; }
+    .upload-zone.drag-over i { color: var(--brand); }
+    .stat-card { border-radius: 12px; padding: 18px 22px; color: #fff; display: flex; flex-direction: column; gap: 4px; }
+    .stat-card .val { font-size: 2rem; font-weight: 700; }
+    .stat-card .lbl { font-size: .82rem; opacity: .85; }
+    .section-card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 24px; }
+    .section-card .card-header { background: transparent; border-bottom: 1px solid #e9ecef; font-weight: 700; font-size: 1rem; padding: 14px 20px; display: flex; align-items: center; gap: 8px; justify-content: space-between;}
+    .header-left { display: flex; align-items: center; gap: 8px; }
+    table thead th { background: var(--brand); color: #fff; white-space: nowrap; font-size: .82rem; }
+    table tbody td { font-size: .82rem; vertical-align: middle; }
+    .row-hold td { background: #f8d7da !important; color: #842029; }
+    .row-skip td { background: #fff3cd !important; color: #664d03; }
+    .gap-row { background: #fff8f0 !important; }
+    #spinner { display: none; }
+    .state-pill { padding: 3px 10px; border-radius: 20px; font-size: .74rem; font-weight: 600; }
+    #toast-container { position: fixed; top: 70px; right: 20px; z-index: 9999; }
+    .progress-bar-custom { height: 8px; border-radius: 4px; }
+    .table-container-scroll { max-height: 600px; overflow: auto; }
+    
+    /* Scroll constraints */
+    .table-scroll-sm { max-height: 400px; overflow-y: auto; }
+    #previewTable thead th, #skipTable thead th, #holdTable thead th { position: sticky; top: 0; z-index: 1; }
+    
+    .shortage-row { background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #dee2e6; }
+    .inference-card { border-left: 4px solid #dc3545; background-color: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    
+    /* Heat Map Colors for Shortage Rows */
+    .row-shortage-1 td { background-color: #fff3cd !important; color: #664d03; border-color: #ffe69c; } /* Light Yellow */
+    .row-shortage-2 td { background-color: #ffdf7e !important; color: #664d03; border-color: #ffc720; } /* Darker Yellow/Orange */
+    .row-shortage-3 td { background-color: #f8d7da !important; color: #842029; border-color: #f1aeb5; } /* Light Red */
+    .row-shortage-4 td { background-color: #f5c2c7 !important; color: #842029; border-color: #ea868f; } /* Darker Red */
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <i class="bi bi-diagram-3-fill fs-3"></i>
+  <div>
+    <h1>Sequence & Skip Order Analyzer</h1>
+    <small>Upload a Sequence Report to identify skipped &amp; held vehicle orders based on Serial Number</small>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<div class="container-fluid px-4 py-4">
+
+  <div class="row g-4 mb-4">
+    
+    <div class="col-lg-4">
+      <div class="section-card h-100 mb-0">
+        <div class="card-header bg-light fw-bold text-dark border-bottom">
+          <div class="header-left"><i class="bi bi-1-circle-fill text-primary"></i> Step 1: Sequence Config</div>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label fw-bold text-dark small">Daily Capacity</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text"><i class="bi bi-123"></i></span>
+              <input type="number" id="inputCapacity" class="form-control" placeholder="100" min="1" onchange="autoUpdateSequence()">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold text-dark small">Start Date</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text"><i class="bi bi-calendar-date"></i></span>
+              <input type="date" id="inputDate" class="form-control" onchange="autoUpdateSequence()">
+            </div>
+          </div>
+          <div>
+            <label class="form-label fw-bold text-dark small">Exclude Holidays</label>
+            <div class="input-group input-group-sm">
+              <input type="date" id="holidayInput" class="form-control">
+              <button class="btn btn-secondary" type="button" onclick="addHoliday()"><i class="bi bi-plus-lg"></i></button>
+            </div>
+            <div id="holidayList" class="d-flex flex-wrap gap-2 mt-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="section-card h-100 mb-0 d-flex flex-column">
+        <div class="card-header bg-light fw-bold text-dark border-bottom">
+          <div class="header-left"><i class="bi bi-2-circle-fill text-primary"></i> Step 2: Part Shortages</div>
+          <button class="btn btn-sm btn-outline-primary" onclick="addShortageRow()"><i class="bi bi-plus"></i> Add Part</button>
+        </div>
+        <div class="card-body overflow-auto" style="max-height: 250px;" id="shortagesContainer">
+          <p class="text-muted small mb-2"><i class="bi bi-info-circle"></i> Map Variant Excel files and provide Ref Order + Qty to track impact.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="section-card h-100 mb-0 d-flex flex-column">
+        <div class="card-header bg-light fw-bold text-dark border-bottom">
+          <div class="header-left"><i class="bi bi-3-circle-fill text-primary"></i> Step 3: Upload Report</div>
+        </div>
+        <div class="card-body d-flex flex-column">
+          <div id="uploadZone" class="upload-zone flex-grow-1 mb-3" onclick="document.getElementById('fileInput').click()">
+            <i class="bi bi-file-earmark-spreadsheet mb-2 d-block"></i>
+            <p class="mb-1 fw-semibold" style="font-size: 0.9rem;">Drag Main Report Here</p>
+            <div id="fileNameDisplay" class="mt-1 text-primary fw-bold" style="font-size: 0.85rem;"></div>
+          </div>
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none"/>
+          
+          <div class="d-flex gap-2 justify-content-end">
+            <button class="btn btn-outline-secondary btn-sm px-3" onclick="resetAll()">Reset</button>
+            <button class="btn btn-primary btn-sm px-4 fw-bold" id="analyzeBtn" onclick="runAnalysis()">
+              <i class="bi bi-search me-1"></i> Analyze
+            </button>
+            <div id="spinner" class="align-items-center ms-2 text-primary fw-semibold" style="display:none; font-size:0.85rem;">
+              <div class="spinner-border spinner-border-sm me-1" role="status"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div> <div id="results" style="display:none;">
+    
+    <div class="row g-3 mb-4" id="statsRow"></div>
+
+    <div class="row g-4 mb-4" id="chartsSection" style="display:none;">
+      <div class="col-md-6">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header">
+            <div class="header-left"><i class="bi bi-pie-chart-fill text-danger"></i> Stratification: Hold Orders (By Model)</div>
+          </div>
+          <div class="card-body d-flex justify-content-center align-items-center" style="min-height: 350px;">
+            <canvas id="holdChart" style="max-height: 320px;"></canvas>
+            <div id="noHoldChart" class="text-muted" style="display:none;">No Hold Orders to stratify.</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header">
+            <div class="header-left"><i class="bi bi-pie-chart-fill text-warning"></i> Stratification: Skip Orders (By Model)</div>
+          </div>
+          <div class="card-body d-flex justify-content-center align-items-center" style="min-height: 350px;">
+            <canvas id="skipChart" style="max-height: 320px;"></canvas>
+            <div id="noSkipChart" class="text-muted" style="display:none;">No Skip Orders to stratify.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4" id="allBarChartsSection" style="display:none;">
+      
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-bar-chart-line-fill text-primary"></i> Hold: Type</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="holdBarChart" style="max-height: 180px;"></canvas>
+            <div id="noHoldBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-bar-chart-steps text-primary"></i> Hold: W/C</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="holdWcBarChart" style="max-height: 180px;"></canvas>
+            <div id="noHoldWcBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-globe-americas text-primary"></i> Hold: Reg.</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="holdRegionBarChart" style="max-height: 180px;"></canvas>
+            <div id="noHoldRegionBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-bar-chart-line-fill text-primary"></i> Skip: Type</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="skipBarChart" style="max-height: 180px;"></canvas>
+            <div id="noSkipBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-bar-chart-steps text-primary"></i> Skip: W/C</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="skipWcBarChart" style="max-height: 180px;"></canvas>
+            <div id="noSkipWcBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-sm-6 col-md-4 col-lg-2">
+        <div class="section-card h-100 mb-0">
+          <div class="card-header px-2 py-2">
+            <div class="header-left" style="font-size: 0.8rem;"><i class="bi bi-globe-americas text-primary"></i> Skip: Reg.</div>
+          </div>
+          <div class="card-body px-2 d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <canvas id="skipRegionBarChart" style="max-height: 180px;"></canvas>
+            <div id="noSkipRegionBarChart" class="text-muted text-center" style="display:none; font-size:0.75rem;">No Data</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="section-card mb-4">
+      <div class="card-header"><div class="header-left"><i class="bi bi-diagram-2-fill"></i> Out-of-Sequence Anomaly Blocks</div></div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover mb-0" id="gapTable">
+            <thead>
+              <tr><th>#</th><th>Break After Serial</th><th>Resumes At Serial</th><th>Out-of-Sequence Range</th><th>Total in Block</th></tr>
+            </thead>
+            <tbody id="gapBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card mb-4">
+      <div class="card-header">
+        <div class="header-left">
+          <i class="bi bi-fast-forward-circle text-warning"></i> Skip Orders
+          <span class="badge bg-warning text-dark ms-2" id="skipBadge">0</span>
+          <small class="text-muted ms-2 fw-normal">(TRIM LINE vehicles trapped in out-of-sequence blocks)</small>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-warning fw-bold text-dark" onclick="downloadSkipCSV()">
+            <i class="bi bi-download me-1"></i> CSV
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive table-scroll-sm">
+          <table class="table table-bordered table-hover mb-0" id="skipTable">
+            <thead>
+              <tr><th>DSN</th><th>Serial No.</th><th>Variant</th><th>Order Number</th><th>Description</th><th>Model</th><th>Work Content</th><th>Type</th><th>Region</th><th>Status</th><th>State</th><th>Vehicle Start Time</th></tr>
+            </thead>
+            <tbody id="skipBody"></tbody>
+          </table>
+        </div>
+        <div id="noSkip" class="text-muted text-center py-3" style="display:none">
+          <i class="bi bi-check-circle-fill text-success me-1"></i> No Skip orders found.
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card mb-4">
+      <div class="card-header">
+        <div class="header-left">
+          <i class="bi bi-pause-circle text-danger"></i> Hold Orders
+          <span class="badge bg-danger ms-2" id="holdBadge">0</span>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-danger fw-bold" onclick="downloadHoldCSV()">
+            <i class="bi bi-download me-1"></i> CSV
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive table-scroll-sm">
+          <table class="table table-bordered table-hover mb-0" id="holdTable">
+            <thead>
+              <tr><th>DSN</th><th>Serial No.</th><th>Variant</th><th>Order Number</th><th>Description</th><th>Model</th><th>Work Content</th><th>Type</th><th>Region</th><th>State</th><th>Hold Status</th><th>Vehicle Start Time</th></tr>
+            </thead>
+            <tbody id="holdBody"></tbody>
+          </table>
+        </div>
+        <div id="noHold" class="text-muted text-center py-3" style="display:none">
+          <i class="bi bi-check-circle-fill text-success me-1"></i> No HOLD orders found.
+        </div>
+      </div>
+    </div>
+    
+    <div class="section-card mb-4">
+      <div class="card-header">
+        <div class="header-left">
+          <i class="bi bi-table text-primary"></i> Data Preview
+          <small class="text-muted ms-2 fw-normal">(Showing all rows)</small>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-primary fw-bold me-2" onclick="downloadCSV()" id="exportBtn">
+            <i class="bi bi-download me-1"></i> Download CSV
+          </button>
+          <span class="badge bg-success" id="previewStatusBadge">Sequence Applied</span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-container-scroll">
+          <table class="table table-bordered table-hover mb-0" id="previewTable">
+            <thead id="previewHead"></thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="inferenceSection" style="display:none;">
+      <h5 class="fw-bold mb-3"><i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Shortage Impact Analysis</h5>
+      <div class="row g-3" id="inferenceBody"></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Register the datalabels plugin globally
+Chart.register(ChartDataLabels);
+
+let selectedFile = null;
+let basePreviewCols = [];
+let basePreviewData = [];
+let exportReadyCols = [];
+let exportReadyData = [];
+
+let globalHoldOrders = [];
+let globalSkipOrders = [];
+
+// Chart Instances
+let holdChartInstance = null;
+let skipChartInstance = null;
+let holdBarChartInstance = null;
+let skipBarChartInstance = null;
+let holdWcBarChartInstance = null;
+let skipWcBarChartInstance = null;
+let holdRegionBarChartInstance = null;
+let skipRegionBarChartInstance = null;
+
+let selectedHolidays = [];
+let latestShortageParts = [];
+
+// Drag & Drop Init
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const spinner = document.getElementById('spinner');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => { uploadZone.classList.remove('drag-over'); });
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f) setFile(f); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+function setFile(f) { selectedFile = f; document.getElementById('fileNameDisplay').textContent = '📎 ' + f.name; }
+
+// Dynamic Shortage Rows Layout
+function addShortageRow() {
+    const container = document.getElementById('shortagesContainer');
+    const row = document.createElement('div');
+    row.className = 'row g-1 mb-2 align-items-center shortage-row';
+    row.innerHTML = `
+        <div class="col-3">
+            <input type="text" class="form-control form-control-sm shortage-part" placeholder="Part No." />
+        </div>
+        <div class="col-3">
+            <input type="text" class="form-control form-control-sm shortage-ref" placeholder="Ref Order" />
+        </div>
+        <div class="col-2">
+            <input type="number" class="form-control form-control-sm shortage-qty" placeholder="Qty" min="0" />
+        </div>
+        <div class="col-3">
+            <input type="file" class="form-control form-control-sm shortage-file" accept=".xlsx,.xls,.csv" />
+        </div>
+        <div class="col-1 text-end">
+            <button class="btn btn-outline-danger btn-sm" onclick="this.closest('.shortage-row').remove()"><i class="bi bi-x"></i></button>
+        </div>
+    `;
+    container.appendChild(row);
+}
+
+function resetAll() {
+  selectedFile = null; fileInput.value = ''; document.getElementById('fileNameDisplay').textContent = '';
+  document.getElementById('results').style.display = 'none'; 
+  document.getElementById('chartsSection').style.display = 'none';
+  document.getElementById('allBarChartsSection').style.display = 'none';
+  document.getElementById('inferenceSection').style.display = 'none';
+  document.getElementById('inputCapacity').value = ''; document.getElementById('inputDate').value = ''; 
+  document.getElementById('shortagesContainer').innerHTML = '<p class="text-muted small mb-2"><i class="bi bi-info-circle"></i> Map Variant Excel files and provide Ref Order + Qty to track impact.</p>';
+  
+  selectedHolidays = [];
+  latestShortageParts = [];
+  renderHolidays();
+  
+  basePreviewCols = []; basePreviewData = []; exportReadyCols = []; exportReadyData = [];
+  globalHoldOrders = []; globalSkipOrders = [];
+  
+  if (holdChartInstance) holdChartInstance.destroy();
+  if (skipChartInstance) skipChartInstance.destroy();
+  if (holdBarChartInstance) holdBarChartInstance.destroy();
+  if (skipBarChartInstance) skipBarChartInstance.destroy();
+  if (holdWcBarChartInstance) holdWcBarChartInstance.destroy();
+  if (skipWcBarChartInstance) skipWcBarChartInstance.destroy();
+  if (holdRegionBarChartInstance) holdRegionBarChartInstance.destroy();
+  if (skipRegionBarChartInstance) skipRegionBarChartInstance.destroy();
+}
+
+function toast(msg, type='danger') {
+  const el = document.createElement('div'); el.className = `alert alert-${type} alert-dismissible fade show shadow`;
+  el.innerHTML = `${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+  document.getElementById('toast-container').appendChild(el); setTimeout(() => el.remove(), 5000);
+}
+
+function addHoliday() {
+    const val = document.getElementById('holidayInput').value;
+    if (val && !selectedHolidays.includes(val)) {
+        selectedHolidays.push(val);
+        renderHolidays();
+        autoUpdateSequence();
+    }
+}
+
+function removeHoliday(val) {
+    selectedHolidays = selectedHolidays.filter(h => h !== val);
+    renderHolidays();
+    autoUpdateSequence();
+}
+
+function renderHolidays() {
+    const container = document.getElementById('holidayList');
+    container.innerHTML = selectedHolidays.map(h => `<span class="badge bg-secondary d-flex align-items-center gap-1">${h} <i class="bi bi-x-circle" style="cursor:pointer" onclick="removeHoliday('${h}')"></i></span>`).join('');
+}
+
+// Reusable CSV Downloader Helper
+function triggerDownload(csvContent, fileName) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url); 
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link); 
+    link.click();
+    document.body.removeChild(link); 
+    URL.revokeObjectURL(url);
+}
+
+// Download Hold Orders
+function downloadHoldCSV() {
+    if (!globalHoldOrders || globalHoldOrders.length === 0) {
+        toast("No Hold Orders available to download.", "warning"); return;
+    }
+    let cols = ['dsn', 'serial', 'variant', 'order_number', 'description', 'model', 'work_content', 'vehicle_type', 'region', 'state', 'hold_status', 'vehicle_start_time'];
+    let csvRows = [cols.join(",")];
+    globalHoldOrders.forEach(row => {
+        csvRows.push(cols.map(c => `"${String(row[c] || '').replace(/"/g, '""')}"`).join(","));
+    });
+    triggerDownload(csvRows.join("\n"), "Hold_Orders.csv");
+}
+
+// Download Skip Orders
+function downloadSkipCSV() {
+    if (!globalSkipOrders || globalSkipOrders.length === 0) {
+        toast("No Skip Orders available to download.", "warning"); return;
+    }
+    let cols = ['dsn', 'serial', 'variant', 'order_number', 'description', 'model', 'work_content', 'vehicle_type', 'region', 'status', 'vehicle_order_state', 'vehicle_start_time'];
+    let csvRows = [cols.join(",")];
+    globalSkipOrders.forEach(row => {
+        csvRows.push(cols.map(c => `"${String(row[c] || '').replace(/"/g, '""')}"`).join(","));
+    });
+    triggerDownload(csvRows.join("\n"), "Skip_Orders.csv");
+}
+
+// Download Data Preview
+function downloadCSV() {
+    if (!exportReadyCols || exportReadyCols.length === 0 || !exportReadyData || exportReadyData.length === 0) {
+        toast("No sequence data available to download.", "warning"); return;
+    }
+    let csvRows = [];
+    csvRows.push(exportReadyCols.map(colName => `"${String(colName).replace(/"/g, '""')}"`).join(","));
+    exportReadyData.forEach(row => {
+        csvRows.push(exportReadyCols.map(colName => `"${String(row[colName] || '').replace(/"/g, '""')}"`).join(","));
+    });
+    triggerDownload(csvRows.join("\n"), "Sequenced_Production_Report.csv");
+}
+
+async function runAnalysis() {
+  if (!selectedFile) { toast("Action Blocked: Please upload a Main Report file.", "warning"); return; }
+
+  spinner.style.display = 'flex'; analyzeBtn.disabled = true;
+  const fd = new FormData(); 
+  fd.append('file', selectedFile);
+
+  // Grab Shortage Data
+  const partInputs = document.querySelectorAll('.shortage-part');
+  const refInputs = document.querySelectorAll('.shortage-ref');
+  const qtyInputs = document.querySelectorAll('.shortage-qty');
+  const fileInputs = document.querySelectorAll('.shortage-file');
+  
+  partInputs.forEach((pInput, idx) => {
+      const fInput = fileInputs[idx];
+      if (pInput.value.trim() && fInput.files.length > 0) {
+          fd.append('shortage_parts', pInput.value.trim());
+          fd.append('shortage_refs', refInputs[idx].value.trim());
+          fd.append('shortage_qtys', qtyInputs[idx].value.trim());
+          fd.append('shortage_files', fInput.files[0]);
+      }
+  });
+
+  try {
+    const res = await fetch('/api/analyze', { method: 'POST', body: fd });
+    const rawData = await res.json();
+    if (!res.ok || rawData.error) throw new Error(rawData.error || "Server returned an error status.");
+    renderResults(rawData);
+    document.getElementById('results').style.display = 'block';
+    setTimeout(() => { document.getElementById('statsRow').scrollIntoView({ behavior: 'smooth' }); }, 200);
+  } catch(e) {
+    toast('Network error: ' + e.message);
+  } finally {
+    spinner.style.display = 'none'; analyzeBtn.disabled = false;
+  }
+}
+
+function renderResults(rawData) {
+  const data = {
+      summary: rawData?.summary || {}, 
+      gaps: Array.isArray(rawData?.gaps) ? rawData.gaps : [], 
+      hold_orders: Array.isArray(rawData?.hold_orders) ? rawData.hold_orders : [],
+      skip_orders: Array.isArray(rawData?.skip_orders) ? rawData.skip_orders : [], 
+      total_skipped: typeof rawData?.summary?.total_skipped === 'number' ? rawData.summary.total_skipped : 0,
+      preview_columns: Array.isArray(rawData?.preview_columns) ? rawData.preview_columns : [], 
+      preview_data: Array.isArray(rawData?.preview_data) ? rawData.preview_data : []
+  };
+
+  const s = data.summary;
+  latestShortageParts = s.shortage_parts || [];
+  
+  // Assign globals for CSV downloading
+  globalHoldOrders = data.hold_orders;
+  globalSkipOrders = data.skip_orders;
+  
+  const cards = [
+    { val: s.total_hold || 0, lbl: 'Total Hold Orders', bg: '#dc3545', icon: 'bi-pause-circle' },
+    { val: s.total_skipped || 0, lbl: 'Total Skip Orders', bg: '#e0a800', icon: 'bi-fast-forward-circle' },
+  ];
+  
+  document.getElementById('statsRow').innerHTML = cards.map(c => `
+    <div class="col-6 col-md-6"><div class="stat-card" style="background:${c.bg}">
+      <div class="d-flex align-items-center gap-2"><i class="bi ${c.icon} fs-5"></i><span class="lbl">${c.lbl}</span></div>
+      <div class="val">${c.val}</div></div></div>`).join('');
+
+  document.getElementById('gapBody').innerHTML = data.gaps.length > 0 ? data.gaps.map((g, i) => `
+        <tr class="gap-row"><td>${i+1}</td><td><code>${g.from_dsn || 'N/A'}</code></td><td><code>${g.to_dsn || 'N/A'}</code></td>
+        <td><span class="text-danger fw-semibold">${g.skipped_range || ''}</span></td><td><span class="badge bg-danger">${g.skipped_count || 0}</span></td></tr>`).join('')
+    : '<tr><td colspan="5" class="text-center text-muted">No out-of-sequence blocks found.</td></tr>';
+
+  document.getElementById('skipBadge').textContent = data.skip_orders.length;
+  if (data.skip_orders.length === 0) {
+    document.getElementById('skipBody').innerHTML = ''; document.getElementById('noSkip').style.display = 'block'; document.getElementById('skipTable').parentElement.style.display = 'none';
+  } else {
+    document.getElementById('noSkip').style.display = 'none'; document.getElementById('skipTable').parentElement.style.display = 'block';
+    document.getElementById('skipBody').innerHTML = data.skip_orders.map(r => `
+      <tr class="row-skip">
+      <td><span class="fw-bold">${r.dsn || '—'}</span></td>
+      <td><code>${r.serial || ''}</code></td>
+      <td><span class="badge bg-secondary">${r.variant || '—'}</span></td>
+      <td>${r.order_number || '—'}</td>
+      <td>${r.description || '—'}</td>
+      <td><span class="badge bg-info text-dark">${r.model || '—'}</span></td>
+      <td><span class="fw-bold">${r.work_content || '—'}</span></td>
+      <td><span class="badge bg-secondary">${r.vehicle_type || '—'}</span></td>
+      <td><span class="badge bg-dark">${r.region || '—'}</span></td>
+      <td><span class="state-pill" style="background:#fff3cd;color:#664d03;">${r.status || '—'}</span></td>
+      <td>${r.vehicle_order_state || '—'}</td>
+      <td>${r.vehicle_start_time || '—'}</td></tr>`).join('');
+  }
+
+  document.getElementById('holdBadge').textContent = data.hold_orders.length;
+  if (data.hold_orders.length === 0) {
+    document.getElementById('holdBody').innerHTML = ''; document.getElementById('noHold').style.display = 'block'; document.getElementById('holdTable').parentElement.style.display = 'none';
+  } else {
+    document.getElementById('noHold').style.display = 'none'; document.getElementById('holdTable').parentElement.style.display = 'block';
+    document.getElementById('holdBody').innerHTML = data.hold_orders.map(r => `
+      <tr class="row-hold">
+      <td><span class="fw-bold">${r.dsn || '—'}</span></td>
+      <td><code>${r.serial || ''}</code></td>
+      <td><span class="badge bg-secondary">${r.variant || '—'}</span></td>
+      <td>${r.order_number || '—'}</td>
+      <td>${r.description || '—'}</td>
+      <td><span class="badge bg-info text-dark">${r.model || '—'}</span></td>
+      <td><span class="fw-bold">${r.work_content || '—'}</span></td>
+      <td><span class="badge bg-secondary">${r.vehicle_type || '—'}</span></td>
+      <td><span class="badge bg-dark">${r.region || '—'}</span></td>
+      <td><span class="state-pill" style="background:#f8d7da;color:#842029;">HOLD</span></td><td><span class="badge bg-warning text-dark">${r.hold_status || '—'}</span></td>
+      <td>${r.vehicle_start_time || '—'}</td></tr>`).join('');
+  }
+
+  basePreviewCols = data.preview_columns; basePreviewData = data.preview_data;
+  applySequence();
+  
+  renderCharts(s.hold_stratification, s.skip_stratification, 
+               s.hold_type_stratification, s.skip_type_stratification, 
+               s.hold_wc_stratification, s.skip_wc_stratification, 
+               s.hold_region_stratification, s.skip_region_stratification,
+               data.hold_orders, data.skip_orders);
+}
+
+function renderCharts(holdStrat, skipStrat, holdTypeStrat, skipTypeStrat, holdWcStrat, skipWcStrat, holdRegionStrat, skipRegionStrat, holdOrdersList, skipOrdersList) {
+    // ---- ROW 1: PIE CHARTS ----
+    document.getElementById('chartsSection').style.display = 'flex';
+
+    const holdKeys = Object.keys(holdStrat || {});
+    const holdValues = Object.values(holdStrat || {});
+    const holdLabelsWithCount = holdKeys.map((key, i) => `${key} (${holdValues[i]})`);
+
+    const skipKeys = Object.keys(skipStrat || {});
+    const skipValues = Object.values(skipStrat || {});
+    const skipLabelsWithCount = skipKeys.map((key, i) => `${key} (${skipValues[i]})`);
+
+    const holdCanvas = document.getElementById('holdChart');
+    const skipCanvas = document.getElementById('skipChart');
+    const noHoldMsg = document.getElementById('noHoldChart');
+    const noSkipMsg = document.getElementById('noSkipChart');
+
+    if (holdChartInstance) holdChartInstance.destroy();
+    if (skipChartInstance) skipChartInstance.destroy();
+
+    const pieOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { 
+                position: 'right', 
+                labels: { boxWidth: 15, font: { size: 13, weight: 'bold' } }
+            },
+            datalabels: { display: false } 
+        }
+    };
+
+    if (holdKeys.length === 0) {
+        holdCanvas.style.display = 'none';
+        noHoldMsg.style.display = 'block';
+    } else {
+        holdCanvas.style.display = 'block';
+        noHoldMsg.style.display = 'none';
+        holdChartInstance = new Chart(holdCanvas.getContext('2d'), {
+            type: 'pie',
+            data: { labels: holdLabelsWithCount, datasets: [{ data: holdValues, backgroundColor: ['#dc3545', '#fd7e14', '#e83e8c', '#6f42c1', '#20c997', '#0dcaf0', '#adb5bd', '#ffc107'], borderWidth: 1 }] },
+            options: pieOptions
+        });
+    }
+
+    if (skipKeys.length === 0) {
+        skipCanvas.style.display = 'none';
+        noSkipMsg.style.display = 'block';
+    } else {
+        skipCanvas.style.display = 'block';
+        noSkipMsg.style.display = 'none';
+        skipChartInstance = new Chart(skipCanvas.getContext('2d'), {
+            type: 'pie',
+            data: { labels: skipLabelsWithCount, datasets: [{ data: skipValues, backgroundColor: ['#ffc107', '#198754', '#0d6efd', '#0dcaf0', '#6610f2', '#d63384', '#fd7e14', '#adb5bd'], borderWidth: 1 }] },
+            options: pieOptions
+        });
+    }
+
+    // ---- ROW 2: SIX BAR CHARTS SIDE-BY-SIDE ----
+    document.getElementById('allBarChartsSection').style.display = 'flex';
+
+    // Type Data
+    const typeLabels = ['Bus', 'Truck'];
+    const holdTypeData = [holdTypeStrat?.['Bus'] || 0, holdTypeStrat?.['Truck'] || 0];
+    const skipTypeData = [skipTypeStrat?.['Bus'] || 0, skipTypeStrat?.['Truck'] || 0];
+
+    // W/C Data
+    const wcLabels = ['HWC', 'LWC'];
+    const holdWcData = [holdWcStrat?.['HWC'] || 0, holdWcStrat?.['LWC'] || 0];
+    const skipWcData = [skipWcStrat?.['HWC'] || 0, skipWcStrat?.['LWC'] || 0];
+
+    // Region Data
+    const regionLabels = ['Domestic', 'Export'];
+    const holdRegionData = [holdRegionStrat?.['Domestic'] || 0, holdRegionStrat?.['Export'] || 0];
+    const skipRegionData = [skipRegionStrat?.['Domestic'] || 0, skipRegionStrat?.['Export'] || 0];
+
+    // Canvas Elements
+    const holdBarCanvas = document.getElementById('holdBarChart');
+    const holdWcBarCanvas = document.getElementById('holdWcBarChart');
+    const holdRegionBarCanvas = document.getElementById('holdRegionBarChart');
+    
+    const skipBarCanvas = document.getElementById('skipBarChart');
+    const skipWcBarCanvas = document.getElementById('skipWcBarChart');
+    const skipRegionBarCanvas = document.getElementById('skipRegionBarChart');
+
+    // Messages
+    const noHoldBarMsg = document.getElementById('noHoldBarChart');
+    const noHoldWcBarMsg = document.getElementById('noHoldWcBarChart');
+    const noHoldRegionBarMsg = document.getElementById('noHoldRegionBarChart');
+    
+    const noSkipBarMsg = document.getElementById('noSkipBarChart');
+    const noSkipWcBarMsg = document.getElementById('noSkipWcBarChart');
+    const noSkipRegionBarMsg = document.getElementById('noSkipRegionBarChart');
+
+    // Destructors
+    if (holdBarChartInstance) holdBarChartInstance.destroy();
+    if (holdWcBarChartInstance) holdWcBarChartInstance.destroy();
+    if (holdRegionBarChartInstance) holdRegionBarChartInstance.destroy();
+    
+    if (skipBarChartInstance) skipBarChartInstance.destroy();
+    if (skipWcBarChartInstance) skipWcBarChartInstance.destroy();
+    if (skipRegionBarChartInstance) skipRegionBarChartInstance.destroy();
+
+    // General Bar Chart Configuration Generator
+    const getBarOptions = (ordersList, categoryKey) => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 25 } },
+        plugins: {
+            legend: { display: false },
+            datalabels: {
+                color: '#0d3b8e', anchor: 'end', align: 'top', font: { weight: 'bold', size: 14 },
+                formatter: (value) => value > 0 ? value : ''
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let type = context.label; 
+                        let count = context.raw;
+                        if (count === 0) return `Count: 0`;
+                        
+                        let breakdown = {};
+                        ordersList.forEach(o => {
+                            if (o[categoryKey] === type) {
+                                let model = o.model || 'Unknown';
+                                breakdown[model] = (breakdown[model] || 0) + 1;
+                            }
+                        });
+                        
+                        let lines = [`Total Count: ${count}`, ''];
+                        Object.keys(breakdown).sort().forEach(k => { lines.push(` • ${k}: ${breakdown[k]}`); });
+                        return lines;
+                    }
+                }
+            }
+        },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    });
+
+    // --- HOLD CHARTS ---
+    if (Math.max(...holdTypeData) === 0) {
+        holdBarCanvas.style.display = 'none'; noHoldBarMsg.style.display = 'block';
+    } else {
+        holdBarCanvas.style.display = 'block'; noHoldBarMsg.style.display = 'none';
+        holdBarChartInstance = new Chart(holdBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: typeLabels, datasets: [{ data: holdTypeData, backgroundColor: ['#6f42c1', '#0dcaf0'], borderWidth: 1 }] },
+            options: getBarOptions(holdOrdersList, 'vehicle_type')
+        });
+    }
+
+    if (Math.max(...holdWcData) === 0) {
+        holdWcBarCanvas.style.display = 'none'; noHoldWcBarMsg.style.display = 'block';
+    } else {
+        holdWcBarCanvas.style.display = 'block'; noHoldWcBarMsg.style.display = 'none';
+        holdWcBarChartInstance = new Chart(holdWcBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: wcLabels, datasets: [{ data: holdWcData, backgroundColor: ['#e83e8c', '#20c997'], borderWidth: 1 }] },
+            options: getBarOptions(holdOrdersList, 'work_content')
+        });
+    }
+
+    if (Math.max(...holdRegionData) === 0) {
+        holdRegionBarCanvas.style.display = 'none'; noHoldRegionBarMsg.style.display = 'block';
+    } else {
+        holdRegionBarCanvas.style.display = 'block'; noHoldRegionBarMsg.style.display = 'none';
+        holdRegionBarChartInstance = new Chart(holdRegionBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: regionLabels, datasets: [{ data: holdRegionData, backgroundColor: ['#0d6efd', '#ffc107'], borderWidth: 1 }] },
+            options: getBarOptions(holdOrdersList, 'region')
+        });
+    }
+
+    // --- SKIP CHARTS ---
+    if (Math.max(...skipTypeData) === 0) {
+        skipBarCanvas.style.display = 'none'; noSkipBarMsg.style.display = 'block';
+    } else {
+        skipBarCanvas.style.display = 'block'; noSkipBarMsg.style.display = 'none';
+        skipBarChartInstance = new Chart(skipBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: typeLabels, datasets: [{ data: skipTypeData, backgroundColor: ['#6f42c1', '#0dcaf0'], borderWidth: 1 }] },
+            options: getBarOptions(skipOrdersList, 'vehicle_type')
+        });
+    }
+
+    if (Math.max(...skipWcData) === 0) {
+        skipWcBarCanvas.style.display = 'none'; noSkipWcBarMsg.style.display = 'block';
+    } else {
+        skipWcBarCanvas.style.display = 'block'; noSkipWcBarMsg.style.display = 'none';
+        skipWcBarChartInstance = new Chart(skipWcBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: wcLabels, datasets: [{ data: skipWcData, backgroundColor: ['#e83e8c', '#20c997'], borderWidth: 1 }] },
+            options: getBarOptions(skipOrdersList, 'work_content')
+        });
+    }
+
+    if (Math.max(...skipRegionData) === 0) {
+        skipRegionBarCanvas.style.display = 'none'; noSkipRegionBarMsg.style.display = 'block';
+    } else {
+        skipRegionBarCanvas.style.display = 'block'; noSkipRegionBarMsg.style.display = 'none';
+        skipRegionBarChartInstance = new Chart(skipRegionBarCanvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: regionLabels, datasets: [{ data: skipRegionData, backgroundColor: ['#0d6efd', '#ffc107'], borderWidth: 1 }] },
+            options: getBarOptions(skipOrdersList, 'region')
+        });
+    }
+}
+
+function autoUpdateSequence() { if (basePreviewData && basePreviewData.length > 0) applySequence(); }
+
+function getNextWorkingDay(date) {
+    let d = new Date(date);
+    while (true) {
+        let yyyy = d.getFullYear();
+        let mm = String(d.getMonth() + 1).padStart(2, '0');
+        let dd = String(d.getDate()).padStart(2, '0');
+        let dateStr = `${yyyy}-${mm}-${dd}`;
+        
+        // 0 is Sunday
+        if (d.getDay() !== 0 && !selectedHolidays.includes(dateStr)) {
+            return d;
+        }
+        d.setDate(d.getDate() + 1);
+    }
+}
+
+function applySequence() {
+    const capStr = document.getElementById('inputCapacity').value;
+    const dateStr = document.getElementById('inputDate').value;
+    const statusBadge = document.getElementById('previewStatusBadge');
+    
+    if (!capStr || !dateStr) {
+        exportReadyCols = [...(basePreviewCols || [])]; exportReadyData = JSON.parse(JSON.stringify(basePreviewData || []));
+        renderTable(exportReadyCols, exportReadyData);
+        if(basePreviewData.length > 0){
+            statusBadge.textContent = "Sequence Unapplied (Missing inputs)"; statusBadge.className = "badge bg-warning text-dark"; 
+        }
+        return;
+    }
+    
+    const baseCapacity = parseInt(capStr, 10);
+    const dParts = dateStr.split('-');
+    
+    let currentDate = getNextWorkingDay(new Date(dParts[0], dParts[1] - 1, dParts[2]));
+
+    let newCols = [...(basePreviewCols || [])];
+    const statusIdx = newCols.indexOf('Status');
+    if (statusIdx === -1) { newCols.unshift('Line in sequence', 'Production Date', 'Line in time'); } else { newCols.splice(statusIdx + 1, 0, 'Line in sequence', 'Production Date', 'Line in time'); }
+    
+    let seqData = JSON.parse(JSON.stringify(basePreviewData || []));
+    let counter = 1; let sequenceStarted = false;
+    const standardTotalMins = 1070; const thursdayTotalMins = 1010; 
+    
+    let currentDayMins = standardTotalMins;
+    let todayCapacity = baseCapacity;
+    let taktTime = currentDayMins / todayCapacity;
+    
+    let currentTime = new Date(currentDate);
+    currentTime.setHours(7, 0, 0, 0);
+
+    seqData.forEach(row => {
+        let status = (row['Status'] || '').toString().trim().toUpperCase();
+        if (!sequenceStarted && status === 'TRIM LINE') sequenceStarted = true;
+
+        if (sequenceStarted) {
+            if (counter === 1) {
+                currentDayMins = currentDate.getDay() === 4 ? thursdayTotalMins : standardTotalMins;
+                todayCapacity = currentDate.getDay() === 4 ? Math.floor(baseCapacity * (thursdayTotalMins / standardTotalMins)) : baseCapacity;
+                taktTime = currentDayMins / todayCapacity;
+                
+                currentTime = new Date(currentDate);
+                currentTime.setHours(7, 0, 0, 0);
+            }
+
+            let yyyy = currentDate.getFullYear(); let mm = String(currentDate.getMonth() + 1).padStart(2, '0'); let dd = String(currentDate.getDate()).padStart(2, '0');
+            
+            row['Line in sequence'] = counter; 
+            row['Production Date'] = `${yyyy}-${mm}-${dd}`;
+            
+            // Format Time
+            let hStr = currentTime.getHours() % 12 || 12;
+            let mStr = String(currentTime.getMinutes()).padStart(2, '0');
+            let ampm = currentTime.getHours() >= 12 ? 'PM' : 'AM';
+            row['Line in time'] = `${hStr}:${mStr} ${ampm}`;
+            
+            // Advance Clock
+            currentTime = new Date(currentTime.getTime() + taktTime * 60000);
+            
+            // Apply Breaks
+            let h = currentTime.getHours();
+            let m = currentTime.getMinutes();
+            let timeInMins = h * 60 + m;
+
+            let break1Start = 11 * 60 + 30; // 11:30 AM
+            let break1End = 12 * 60;        // 12:00 PM
+            let break2Start = 20 * 60 + 30; // 8:30 PM
+            let break2End = 21 * 60;        // 9:00 PM
+
+            if (timeInMins >= break1Start && timeInMins < break1End) {
+                currentTime.setHours(12, 0, 0, 0);
+            } else if (timeInMins >= break2Start && timeInMins < break2End) {
+                currentTime.setHours(21, 0, 0, 0);
+            }
+            
+            counter++; 
+            if (counter > todayCapacity) { 
+                counter = 1; 
+                currentDate.setDate(currentDate.getDate() + 1); 
+                currentDate = getNextWorkingDay(currentDate);
+            }
+        } else {
+            row['Line in sequence'] = ''; row['Production Date'] = ''; row['Line in time'] = '';
+        }
+    });
+
+    exportReadyCols = newCols; exportReadyData = seqData;
+    renderTable(newCols, seqData);
+    statusBadge.textContent = "Sequence & Dates Applied"; statusBadge.className = "badge bg-success";
+    
+    // Generate the inference window using the freshly calculated dates
+    generateInference(seqData);
+}
+
+function renderTable(cols, data) {
+  if (!Array.isArray(cols) || !Array.isArray(data)) return;
+  
+  // Table Headers
+  document.getElementById('previewHead').innerHTML = '<tr>' + cols.map(c => {
+      let extraClass = (c === 'Line in sequence' || c === 'Production Date' || c === 'Line in time') ? 'bg-primary text-white px-3 text-nowrap' : 'text-nowrap';
+      return `<th class="${extraClass}">${c}</th>`;
+  }).join('') + '</tr>';
+  
+  // Table Body
+  document.getElementById('previewBody').innerHTML = data.map(row => {
+    
+    let shortageCount = 0;
+    for (let key in row) {
+        if (row[key] === '⚠️ SHORTAGE') {
+            shortageCount++;
+        }
+    }
+    
+    let rowClass = "";
+    if (shortageCount === 1) rowClass = "row-shortage-1";
+    else if (shortageCount === 2) rowClass = "row-shortage-2";
+    else if (shortageCount === 3) rowClass = "row-shortage-3";
+    else if (shortageCount >= 4) rowClass = "row-shortage-4";
+
+    return `<tr class="${rowClass}">` + cols.map(c => {
+        let val = row[c] || '';
+        let cellClass = "text-nowrap";
+        
+        // Sequence Columns Logic
+        if ((c === 'Line in sequence' || c === 'Production Date' || c === 'Line in time') && val) {
+            if (shortageCount > 0) {
+                cellClass = "text-center fw-bold text-nowrap";
+            } else {
+                cellClass = "text-center fw-bold bg-light text-primary text-nowrap";
+            }
+        }
+        
+        // Highlight logic for the explicit Part Shortage cell
+        if (val === '⚠️ SHORTAGE') {
+            cellClass = "text-center fw-bold bg-danger text-white text-nowrap";
+        } else if (val === 'Covered') {
+            cellClass = "text-center fw-bold text-success text-nowrap";
+        }
+        
+        return `<td class="${cellClass}">${val}</td>`;
+      }).join('') + '</tr>';
+  }).join('');
+}
+
+// ----- INFERENCE ENGINE -----
+function generateInference(seqData) {
+    const inferenceSec = document.getElementById('inferenceSection');
+    const inferenceBody = document.getElementById('inferenceBody');
+    
+    if (!latestShortageParts || latestShortageParts.length === 0) {
+        inferenceSec.style.display = 'none';
+        return;
+    }
+    
+    inferenceSec.style.display = 'block';
+    
+    // Ensure we only look at rows that actually have a Production Date scheduled
+    let allDates = [...new Set(seqData.map(r => r['Production Date']).filter(d => d !== ''))].sort();
+    
+    let html = '';
+    
+    latestShortageParts.forEach(part => {
+        let connectedRows = seqData.filter(r => r[part] && r[part] !== '');
+        let impactedRows = connectedRows.filter(r => r[part] === '⚠️ SHORTAGE');
+        
+        // Filter strictly for rows that are successfully placed on a Production Date
+        let scheduledConnectedRows = connectedRows.filter(r => r['Production Date'] !== '');
+        let scheduledImpactedRows = impactedRows.filter(r => r['Production Date'] !== '');
+
+        if (impactedRows.length === 0) {
+            html += `
+            <div class="col-lg-5">
+                <div class="inference-card h-100" style="border-left-color: #198754;">
+                    <h6 class="fw-bold mb-1">Part: ${part}</h6>
+                    <p class="text-success fw-bold mb-0"><i class="bi bi-check-circle-fill me-1"></i> Stock completely covers current production sequence.</p>
+                </div>
+            </div>`;
+        } else {
+            // Find Shortage Date safely
+            let shortDate = scheduledImpactedRows.length > 0 ? scheduledImpactedRows[0]['Production Date'] : 'Not Scheduled';
+            let models = [...new Set(impactedRows.map(r => r['Model'] || 'Unknown'))].join(', ');
+            
+            // Extract the EXACT "Line in sequence" numbers impacted on the FIRST shortage day
+            let firstDaySeqs = 'N/A';
+            if (scheduledImpactedRows.length > 0) {
+                firstDaySeqs = scheduledImpactedRows
+                    .filter(r => r['Production Date'] === shortDate)
+                    .map(r => r['Line in sequence'])
+                    .filter(seq => seq !== '' && seq !== undefined)
+                    .join(', ');
+            }
+
+            let reqRowsHtml = '';
+
+            if (scheduledImpactedRows.length > 0) {
+                let dateIdx = allDates.indexOf(shortDate);
+                // Pull the next 4 unique production days
+                let targetDates = allDates.slice(dateIdx, dateIdx + 4);
+                
+                reqRowsHtml = targetDates.map(d => {
+                    let dayPlanCount = scheduledConnectedRows.filter(r => r['Production Date'] === d).length;
+                    let count = scheduledImpactedRows.filter(r => r['Production Date'] === d).length;
+                    return `<tr>
+                                <td class="text-muted small">${d}</td>
+                                <td class="fw-bold text-dark text-end">${dayPlanCount}</td>
+                                <td class="fw-bold text-danger text-end">${count}</td>
+                            </tr>`;
+                }).join('');
+            } else {
+                reqRowsHtml = `<tr><td colspan="3" class="text-muted small text-center py-2">Impacted vehicles are on Hold/Not Scheduled.</td></tr>`;
+            }
+            
+            html += `
+            <div class="col-lg-5">
+                <div class="inference-card h-100">
+                    <h6 class="fw-bold text-danger mb-3 border-bottom pb-2">Impacted Part: ${part}</h6>
+                    <div class="mb-2">
+                        <span class="text-muted small d-block">First Shortage Date</span>
+                        <span class="fw-bold text-dark"><i class="bi bi-calendar-x text-danger me-1"></i> ${shortDate}</span>
+                    </div>
+                    <div class="mb-3">
+                        <span class="text-muted small d-block">Line in Sequence Numbers (on ${shortDate})</span>
+                        <span class="fw-bold text-dark" style="font-size: 0.85rem; word-break: break-word;">${firstDaySeqs || 'None'}</span>
+                    </div>
+                    <div class="mb-3">
+                        <span class="text-muted small d-block">Connecting Models</span>
+                        <span class="fw-bold text-dark" style="font-size: 0.9rem;">${models}</span>
+                    </div>
+                    <span class="text-muted small d-block mb-1">Day-wise Requirements (Next 4 Days)</span>
+                    <table class="table table-sm table-bordered mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="small text-muted">Date</th>
+                                <th class="small text-muted text-end">Day Plan</th>
+                                <th class="small text-muted text-end">Shortage Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${reqRowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+    });
+    
+    inferenceBody.innerHTML = html;
+}
+</script>
+</body>
+</html>

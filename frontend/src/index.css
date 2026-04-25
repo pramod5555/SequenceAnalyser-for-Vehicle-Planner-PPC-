@@ -1,0 +1,49 @@
+:root {
+  font-family: 'Bahnschrift', 'Segoe UI Variable', 'Trebuchet MS', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #17304d;
+  background:
+    radial-gradient(circle at top, rgba(255, 196, 69, 0.15), transparent 25%),
+    linear-gradient(180deg, #eef4f8 0%, #f8fbfd 35%, #f3f7fb 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+code {
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+}
+
+.btn-primary {
+  background-color: #12345b;
+  border-color: #12345b;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: #1b4a7d;
+  border-color: #1b4a7d;
+}
