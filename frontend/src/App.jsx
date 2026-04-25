@@ -35,6 +35,7 @@ const HOLD_EXPORT_COLUMNS = [
   'region',
   'state',
   'hold_status',
+  'hold_reason',
   'vehicle_start_time',
 ]
 const SKIP_EXPORT_COLUMNS = [
@@ -49,6 +50,7 @@ const SKIP_EXPORT_COLUMNS = [
   'region',
   'status',
   'vehicle_order_state',
+  'skip_reason',
   'vehicle_start_time',
 ]
 const HOLD_TABLE_COLUMNS = [
@@ -63,6 +65,7 @@ const HOLD_TABLE_COLUMNS = [
   ['Region', 'region'],
   ['State', 'vehicle_order_state'],
   ['Hold Status', 'hold_status'],
+  ['Hold Reason', 'hold_reason'],
   ['Vehicle Start Time', 'vehicle_start_time'],
 ]
 const SKIP_TABLE_COLUMNS = [
@@ -77,6 +80,7 @@ const SKIP_TABLE_COLUMNS = [
   ['Region', 'region'],
   ['Status', 'status'],
   ['State', 'vehicle_order_state'],
+  ['Skip Reason', 'skip_reason'],
   ['Vehicle Start Time', 'vehicle_start_time'],
 ]
 const PIE_HOLD_COLORS = ['#d9485f', '#f08949', '#ef7d95', '#5f50cf', '#15938f', '#3c91e6', '#9aa8bc', '#ffc34d']
@@ -100,6 +104,116 @@ function normalizeData(rawData) {
     skipOrders: Array.isArray(rawData?.skip_orders) ? rawData.skip_orders : [],
     previewColumns: Array.isArray(rawData?.preview_columns) ? rawData.preview_columns : [],
     previewData: Array.isArray(rawData?.preview_data) ? rawData.preview_data : [],
+  }
+}
+
+function normalizeIdentifier(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/\.0$/, '')
+    .toUpperCase()
+}
+function getRowIdentifiers(row) {
+  const serial = row?.serial ?? row?.['Serial Number'] ?? row?.Serial ?? ''
+  const dsn = row?.dsn ?? row?.DSN ?? row?.['Delivery Sequence Number'] ?? ''
+  const orderNumber = row?.order_number ?? row?.['Order Number'] ?? row?.['Order No'] ?? ''
+  const variant = row?.variant ?? row?.Variant ?? ''
+
+  return {
+    serial: normalizeIdentifier(serial),
+    dsn: normalizeIdentifier(dsn),
+    orderNumber: normalizeIdentifier(orderNumber),
+    variant: normalizeIdentifier(variant),
+  }
+}
+
+function getVehicleKey(row, kind) {
+  const ids = getRowIdentifiers(row)
+  return [ids.serial, ids.dsn, ids.orderNumber, ids.variant, kind].filter(Boolean).join('::')
+}
+
+function getVehicleLookupKeys(row, kind) {
+  const ids = getRowIdentifiers(row)
+  const keys = [
+    [ids.serial, kind],
+    [ids.orderNumber, kind],
+    [ids.dsn, kind],
+    [ids.serial, ids.orderNumber, kind],
+    [ids.serial, ids.dsn, kind],
+    [ids.serial, ids.variant, kind],
+    [ids.orderNumber, ids.variant, kind],
+    [ids.serial, ids.orderNumber, ids.variant, kind],
+    [ids.serial, ids.dsn, ids.orderNumber, ids.variant, kind],
+  ]
+
+  return [...new Set(keys.map((parts) => parts.filter(Boolean).join('::')).filter(Boolean))]
+}
+
+function enrichAnalysisWithReasons(analysis, holdReasons, skipReasons) {
+  if (!analysis) {
+    return null
+  }
+
+  const previewReasonColumn = 'Skip/Hold Reason'
+  const previewColumns = analysis.previewColumns.filter(
+    (column) => !['Hold Reason', 'Skip Reason', previewReasonColumn].includes(column),
+  )
+  const statusIndex = previewColumns.indexOf('Status')
+  const previewReasonInsertIndex = statusIndex === -1 ? 0 : statusIndex + 1
+  previewColumns.splice(previewReasonInsertIndex, 0, previewReasonColumn)
+
+  const holdStatusColumn = 'Hold Status'
+
+  if (!previewColumns.includes(holdStatusColumn) && analysis.previewColumns.includes(holdStatusColumn)) {
+    const statusInsertIndex = previewColumns.indexOf('Status')
+    previewColumns.splice(statusInsertIndex === -1 ? previewReasonInsertIndex : statusInsertIndex + 1, 0, holdStatusColumn)
+  }
+
+  const holdOrders = analysis.holdOrders.map((row) => ({
+    ...row,
+    hold_reason: holdReasons[getVehicleKey(row, 'hold')] || '',
+  }))
+
+  const skipOrders = analysis.skipOrders.map((row) => ({
+    ...row,
+    skip_reason: skipReasons[getVehicleKey(row, 'skip')] || '',
+  }))
+
+  const holdReasonLookup = new Map()
+  for (const row of holdOrders) {
+    for (const key of getVehicleLookupKeys(row, 'hold')) {
+      holdReasonLookup.set(key, row.hold_reason)
+    }
+  }
+
+  const skipReasonLookup = new Map()
+  for (const row of skipOrders) {
+    for (const key of getVehicleLookupKeys(row, 'skip')) {
+      skipReasonLookup.set(key, row.skip_reason)
+    }
+  }
+
+  const previewData = analysis.previewData.map((row) => {
+    const holdReason = getVehicleLookupKeys(row, 'hold').find((key) => holdReasonLookup.has(key))
+    const skipReason = getVehicleLookupKeys(row, 'skip').find((key) => skipReasonLookup.has(key))
+    const mergedReason = holdReason
+      ? holdReasonLookup.get(holdReason) || ''
+      : skipReason
+        ? skipReasonLookup.get(skipReason) || ''
+        : ''
+
+    return {
+      ...row,
+      [previewReasonColumn]: mergedReason,
+    }
+  })
+
+  return {
+    ...analysis,
+    holdOrders,
+    skipOrders,
+    previewColumns,
+    previewData,
   }
 }
 
@@ -514,7 +628,19 @@ function Toasts({ items, onDismiss }) {
   )
 }
 
-function ResultsTable({ title, icon, badgeClassName, badgeValue, emptyMessage, columns, rows, onDownload, fileNameHint }) {
+function ResultsTable({
+  title,
+  icon,
+  badgeClassName,
+  badgeValue,
+  emptyMessage,
+  columns,
+  rows,
+  onDownload,
+  fileNameHint,
+  reasonField,
+  onReasonChange,
+}) {
   const isHoldTable = icon.includes('pause')
 
   return (
@@ -550,7 +676,14 @@ function ResultsTable({ title, icon, badgeClassName, badgeValue, emptyMessage, c
                   <tr key={`${title}-${row.serial || row.dsn || index}`} className={isHoldTable ? 'row-hold' : 'row-skip'}>
                     {columns.map(([label, key]) => (
                       <td key={`${label}-${key}`}>
-                        <OrderCell field={key} value={row[key]} holdTable={isHoldTable} />
+                        <OrderCell
+                          field={key}
+                          value={row[key]}
+                          holdTable={isHoldTable}
+                          row={row}
+                          reasonField={reasonField}
+                          onReasonChange={onReasonChange}
+                        />
                       </td>
                     ))}
                   </tr>
@@ -564,8 +697,20 @@ function ResultsTable({ title, icon, badgeClassName, badgeValue, emptyMessage, c
   )
 }
 
-function OrderCell({ field, value, holdTable }) {
+function OrderCell({ field, value, holdTable, row, reasonField, onReasonChange }) {
   const safeValue = value || '—'
+
+  if (reasonField && field === reasonField) {
+    return (
+      <textarea
+        className="form-control form-control-sm reason-input"
+        rows="2"
+        placeholder={`Enter ${holdTable ? 'hold' : 'skip'} reason`}
+        value={value || ''}
+        onChange={(event) => onReasonChange?.(row, event.target.value)}
+      />
+    )
+  }
 
   if (field === 'variant') {
     return <span className="badge text-bg-secondary">{safeValue}</span>
@@ -610,20 +755,23 @@ function App() {
   const [holidays, setHolidays] = useState([])
   const [shortages, setShortages] = useState([createShortageRow()])
   const [analysis, setAnalysis] = useState(null)
+  const [holdReasons, setHoldReasons] = useState({})
+  const [skipReasons, setSkipReasons] = useState({})
   const [loading, setLoading] = useState(false)
   const [toasts, setToasts] = useState([])
   const resultsRef = useRef(null)
   const toastCounterRef = useRef(0)
+  const enrichedAnalysis = enrichAnalysisWithReasons(analysis, holdReasons, skipReasons)
 
   const sequencedPreview = applySequence(
-    analysis?.previewColumns ?? [],
-    analysis?.previewData ?? [],
+    enrichedAnalysis?.previewColumns ?? [],
+    enrichedAnalysis?.previewData ?? [],
     capacity,
     startDate,
     holidays,
   )
   const deferredPreviewRows = useDeferredValue(sequencedPreview.rows)
-  const inferenceCards = buildInference(sequencedPreview.rows, analysis?.summary?.shortage_parts ?? [])
+  const inferenceCards = buildInference(sequencedPreview.rows, enrichedAnalysis?.summary?.shortage_parts ?? [])
 
   useEffect(() => {
     if (!analysis || !resultsRef.current) {
@@ -685,6 +833,8 @@ function App() {
     setHolidays([])
     setShortages([createShortageRow()])
     setAnalysis(null)
+    setHoldReasons({})
+    setSkipReasons({})
     setToasts([])
   }
 
@@ -716,6 +866,8 @@ function App() {
 
       startTransition(() => {
         setAnalysis(normalizeData(raw))
+        setHoldReasons({})
+        setSkipReasons({})
       })
     } catch (error) {
       pushToast(`Network error: ${error.message}`, 'danger')
@@ -733,34 +885,46 @@ function App() {
   }
 
   function downloadHoldOrders() {
-    if (!analysis?.holdOrders?.length) {
+    if (!enrichedAnalysis?.holdOrders?.length) {
       pushToast('No hold orders available to download.', 'warning')
       return
     }
-    triggerDownload('Hold_Orders.csv', HOLD_EXPORT_COLUMNS, analysis.holdOrders)
+    triggerDownload('Hold_Orders.csv', HOLD_EXPORT_COLUMNS, enrichedAnalysis.holdOrders)
   }
 
   function downloadSkipOrders() {
-    if (!analysis?.skipOrders?.length) {
+    if (!enrichedAnalysis?.skipOrders?.length) {
       pushToast('No skip orders available to download.', 'warning')
       return
     }
-    triggerDownload('Skip_Orders.csv', SKIP_EXPORT_COLUMNS, analysis.skipOrders)
+    triggerDownload('Skip_Orders.csv', SKIP_EXPORT_COLUMNS, enrichedAnalysis.skipOrders)
   }
 
-  const holdModelData = buildPieData(analysis?.summary?.hold_stratification, PIE_HOLD_COLORS)
-  const skipModelData = buildPieData(analysis?.summary?.skip_stratification, PIE_SKIP_COLORS)
-  const holdTypeData = [analysis?.summary?.hold_type_stratification?.Bus || 0, analysis?.summary?.hold_type_stratification?.Truck || 0]
-  const skipTypeData = [analysis?.summary?.skip_type_stratification?.Bus || 0, analysis?.summary?.skip_type_stratification?.Truck || 0]
-  const holdWcData = [analysis?.summary?.hold_wc_stratification?.HWC || 0, analysis?.summary?.hold_wc_stratification?.LWC || 0]
-  const skipWcData = [analysis?.summary?.skip_wc_stratification?.HWC || 0, analysis?.summary?.skip_wc_stratification?.LWC || 0]
+  function updateHoldReason(row, value) {
+    const key = getVehicleKey(row, 'hold')
+    console.info('Updated hold reason', { key, serial: row.serial, dsn: row.dsn, orderNumber: row.order_number, value })
+    setHoldReasons((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateSkipReason(row, value) {
+    const key = getVehicleKey(row, 'skip')
+    console.info('Updated skip reason', { key, serial: row.serial, dsn: row.dsn, orderNumber: row.order_number, value })
+    setSkipReasons((current) => ({ ...current, [key]: value }))
+  }
+
+  const holdModelData = buildPieData(enrichedAnalysis?.summary?.hold_stratification, PIE_HOLD_COLORS)
+  const skipModelData = buildPieData(enrichedAnalysis?.summary?.skip_stratification, PIE_SKIP_COLORS)
+  const holdTypeData = [enrichedAnalysis?.summary?.hold_type_stratification?.Bus || 0, enrichedAnalysis?.summary?.hold_type_stratification?.Truck || 0]
+  const skipTypeData = [enrichedAnalysis?.summary?.skip_type_stratification?.Bus || 0, enrichedAnalysis?.summary?.skip_type_stratification?.Truck || 0]
+  const holdWcData = [enrichedAnalysis?.summary?.hold_wc_stratification?.HWC || 0, enrichedAnalysis?.summary?.hold_wc_stratification?.LWC || 0]
+  const skipWcData = [enrichedAnalysis?.summary?.skip_wc_stratification?.HWC || 0, enrichedAnalysis?.summary?.skip_wc_stratification?.LWC || 0]
   const holdRegionData = [
-    analysis?.summary?.hold_region_stratification?.Domestic || 0,
-    analysis?.summary?.hold_region_stratification?.Export || 0,
+    enrichedAnalysis?.summary?.hold_region_stratification?.Domestic || 0,
+    enrichedAnalysis?.summary?.hold_region_stratification?.Export || 0,
   ]
   const skipRegionData = [
-    analysis?.summary?.skip_region_stratification?.Domestic || 0,
-    analysis?.summary?.skip_region_stratification?.Export || 0,
+    enrichedAnalysis?.summary?.skip_region_stratification?.Domestic || 0,
+    enrichedAnalysis?.summary?.skip_region_stratification?.Export || 0,
   ]
 
   return (
@@ -989,19 +1153,19 @@ function App() {
           </div>
         </section>
 
-        {analysis ? (
+        {enrichedAnalysis ? (
           <div ref={resultsRef} className="results-shell">
             <section className="row g-3 mb-4 mt-1">
-              <StatCard label="Total Hold Orders" value={analysis.summary.total_hold || 0} tone="hold" icon="bi-pause-circle" />
+              <StatCard label="Total Hold Orders" value={enrichedAnalysis.summary.total_hold || 0} tone="hold" icon="bi-pause-circle" />
               <StatCard
                 label="Total Skip Orders"
-                value={analysis.summary.total_skipped || 0}
+                value={enrichedAnalysis.summary.total_skipped || 0}
                 tone="skip"
                 icon="bi-fast-forward-circle"
               />
               <StatCard
                 label="Rows in Report"
-                value={analysis.summary.total_in_file || 0}
+                value={enrichedAnalysis.summary.total_in_file || 0}
                 tone="volume"
                 icon="bi-table"
               />
@@ -1029,7 +1193,7 @@ function App() {
                 labels={['Bus', 'Truck']}
                 values={holdTypeData}
                 colors={['#5f50cf', '#2ec4b6']}
-                orders={analysis.holdOrders}
+                orders={enrichedAnalysis.holdOrders}
                 categoryKey="vehicle_type"
               />
               <BarChartCard
@@ -1038,7 +1202,7 @@ function App() {
                 labels={['HWC', 'LWC']}
                 values={holdWcData}
                 colors={['#ef476f', '#2a9d8f']}
-                orders={analysis.holdOrders}
+                orders={enrichedAnalysis.holdOrders}
                 categoryKey="work_content"
               />
               <BarChartCard
@@ -1047,7 +1211,7 @@ function App() {
                 labels={['Domestic', 'Export']}
                 values={holdRegionData}
                 colors={['#3c91e6', '#ffc145']}
-                orders={analysis.holdOrders}
+                orders={enrichedAnalysis.holdOrders}
                 categoryKey="region"
               />
               <BarChartCard
@@ -1056,7 +1220,7 @@ function App() {
                 labels={['Bus', 'Truck']}
                 values={skipTypeData}
                 colors={['#5f50cf', '#2ec4b6']}
-                orders={analysis.skipOrders}
+                orders={enrichedAnalysis.skipOrders}
                 categoryKey="vehicle_type"
               />
               <BarChartCard
@@ -1065,7 +1229,7 @@ function App() {
                 labels={['HWC', 'LWC']}
                 values={skipWcData}
                 colors={['#ef476f', '#2a9d8f']}
-                orders={analysis.skipOrders}
+                orders={enrichedAnalysis.skipOrders}
                 categoryKey="work_content"
               />
               <BarChartCard
@@ -1074,7 +1238,7 @@ function App() {
                 labels={['Domestic', 'Export']}
                 values={skipRegionData}
                 colors={['#3c91e6', '#ffc145']}
-                orders={analysis.skipOrders}
+                orders={enrichedAnalysis.skipOrders}
                 categoryKey="region"
               />
             </section>
@@ -1098,8 +1262,8 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {analysis.gaps.length > 0 ? (
-                        analysis.gaps.map((gap, index) => (
+                      {enrichedAnalysis.gaps.length > 0 ? (
+                        enrichedAnalysis.gaps.map((gap, index) => (
                           <tr key={`${gap.from_dsn}-${gap.to_dsn}-${index}`} className="gap-row">
                             <td>{index + 1}</td>
                             <td>
@@ -1133,23 +1297,27 @@ function App() {
               title="Skip Orders"
               icon="bi-fast-forward-circle text-warning"
               badgeClassName="bg-warning text-dark"
-              badgeValue={analysis.skipOrders.length}
+              badgeValue={enrichedAnalysis.skipOrders.length}
               emptyMessage="No skip orders found."
               columns={SKIP_TABLE_COLUMNS}
-              rows={analysis.skipOrders}
+              rows={enrichedAnalysis.skipOrders}
               onDownload={downloadSkipOrders}
               fileNameHint="TRIM LINE vehicles trapped in out-of-sequence blocks"
+              reasonField="skip_reason"
+              onReasonChange={updateSkipReason}
             />
 
             <ResultsTable
               title="Hold Orders"
               icon="bi-pause-circle text-danger"
               badgeClassName="bg-danger"
-              badgeValue={analysis.holdOrders.length}
+              badgeValue={enrichedAnalysis.holdOrders.length}
               emptyMessage="No hold orders found."
               columns={HOLD_TABLE_COLUMNS}
-              rows={analysis.holdOrders}
+              rows={enrichedAnalysis.holdOrders}
               onDownload={downloadHoldOrders}
+              reasonField="hold_reason"
+              onReasonChange={updateHoldReason}
             />
 
             <section className="panel-card mb-4">

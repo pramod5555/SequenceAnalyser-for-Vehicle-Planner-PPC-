@@ -396,6 +396,12 @@
   color: #7a5900;
 }
 
+.reason-input {
+  min-width: 14rem;
+  resize: vertical;
+  white-space: normal;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
